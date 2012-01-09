@@ -108,7 +108,7 @@ class ThumbnailNode(Node):
         return ''
 
 
-def thumbnail(parser, token):
+def easy_thumbnail(parser, token):
     """
     Creates a thumbnail of an ImageField.
 
@@ -196,4 +196,4 @@ def thumbnail(parser, token):
     return ThumbnailNode(source_var, opts=opts, context_name=context_name)
 
 
-register.tag(thumbnail)
+register.tag(easy_thumbnail)
