@@ -1,7 +1,11 @@
+MANIFEST
+dist
+build
+docs/_build
+.tox/
+*.egg
+*.egg-info*
 *.pyc
 *.db
+reports/*
 sample_project/media
-_build
-*.egg-info*
-build/
-dist/

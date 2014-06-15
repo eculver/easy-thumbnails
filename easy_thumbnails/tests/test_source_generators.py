@@ -1,7 +1,10 @@
+import base64
+from django.utils import six
+
 try:
-    from cStringIO import StringIO
+    from cStringIO import cStringIO as BytesIO
 except ImportError:
-    from StringIO import StringIO
+    from django.utils.six import BytesIO
 
 try:
     from PIL import Image, ImageChops
@@ -10,7 +13,7 @@ except ImportError:
     import ImageChops
 
 from easy_thumbnails import source_generators
-from unittest import TestCase
+from easy_thumbnails.tests import utils as test
 
 EXIF_REFERENCE = '/9j/4AAQSkZJRgABAQEASABIAAD/4QAiRXhpZgAASUkqAAgAAAABABIBAwABAAAAAQAAAAAAAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH//gAdQ3JlYXRlZCB3aXRoIEdJTVAgb24gYSBNYWMA/8AACwgAHgAeAQERAP/EABgAAAMBAQAAAAAAAAAAAAAAAAAICgkL/8QAPhAAAAIGBgQGEwAAAAAAAAAABxYABAUGFRcICRMUGCUDChkaIyc3ZoinJDQ1OUVHSVdYZ2imqLjI1tfm5//aAAgBAQAAPwC/hBBBIA9tpWdekz1M0ffxQlftVwNon0jKCYGDKMrzHESXxmaY3jgrvO9ES8MQguqx8ndVksNgqdzYLDZah2Ay1W8XW9LVuu6dYWNMU5xtE8HJXS4eYuGM7RnJXea98hBRh3d5ktS73eKL3atha2/D2tlobNAMbVJ3zm+5gffaiKruy/tsfDd/e0QAbdYb2CInvNVN4QsVuFKC8fs/5Fn2ejvMmkpyVyUGIrFacRL5R3jjZcMeUReBMt/6sus03i6dnEng7wdy38ZGIOYuIM+8wgQKJRkhznj5n8CwXNtVNmX67Orf99TVROQLrR3f16c3Rm+Tyj6m/wBqMflRehN9XCX+J//Z'
 EXIF_ORIENTATION = {
@@ -36,29 +39,62 @@ def near_identical(im1, im2):
 
 
 def image_from_b64(data):
-    return Image.open(StringIO(data.decode('base64')))
+    return Image.open(BytesIO(base64.b64decode(data)))
 
 
-class PilImageTest(TestCase):
+class PilImageTest(test.BaseTest):
 
     def test_not_image(self):
         """
-        Non-readable images are passed silently.
+        Non-images raise an exception.
         """
-        self.assertEqual(source_generators.pil_image(StringIO('not an image')),
-            None)
+        self.assertRaises(
+            IOError,
+            source_generators.pil_image, BytesIO(six.b('not an image')))
+
+    def test_nearly_image(self):
+        """
+        Truncated images *don't* raise an exception if they can still be read.
+        """
+        data = self.create_image(None, None)
+        reference = source_generators.pil_image(data)
+        data.seek(0)
+        trunc_data = BytesIO()
+        trunc_data.write(data.read()[:-10])
+        trunc_data.seek(0)
+        im = source_generators.pil_image(trunc_data)
+        # im will be truncated, but it should be the same dimensions.
+        self.assertEqual(im.size, reference.size)
+        # self.assertRaises(IOError, source_generators.pil_image, trunc_data)
 
     def test_exif_orientation(self):
         """
         Images with EXIF orientation data are reoriented.
         """
         reference = image_from_b64(EXIF_REFERENCE)
-        for exif_orientation, data in EXIF_ORIENTATION.iteritems():
+        for exif_orientation, data in six.iteritems(EXIF_ORIENTATION):
             im = image_from_b64(data)
             self.assertEqual(exif_orientation, im._getexif().get(0x0112))
             self.assertFalse(near_identical(reference, im))
 
-            im = source_generators.pil_image(StringIO(data.decode('base64')))
-            self.assertTrue(near_identical(reference, im),
-               'EXIF orientation %s did not match reference image' %
-                   exif_orientation)
+            im = source_generators.pil_image(BytesIO(base64.b64decode(data)))
+            self.assertTrue(
+                near_identical(reference, im),
+                'EXIF orientation %s did not match reference image' %
+                exif_orientation)
+
+    def test_switch_off_exif_orientation(self):
+        """
+        Images with EXIF orientation data are not reoriented if the
+        ``exif_orientation`` parameter is ``False``.
+        """
+        reference = image_from_b64(EXIF_REFERENCE)
+        data = EXIF_ORIENTATION[2]
+        im = image_from_b64(data)
+        self.assertFalse(near_identical(reference, im))
+
+        im = source_generators.pil_image(
+            BytesIO(base64.b64decode(data)), exif_orientation=False)
+        self.assertFalse(
+            near_identical(reference, im),
+            'Image should not have been modified')

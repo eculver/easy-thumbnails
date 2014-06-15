@@ -3,7 +3,7 @@ Installation
 ============
 
 Before installing easy-thumbnails, you'll obviously need to have copy of Django
-installed. For the |version| release, Django 1.1 is required.
+installed. For the |version| release, Django 1.4 and up is supported.
 
 By default, all of the image manipulation is handled by the
 `Python Imaging Library`__ (a.k.a. PIL), so you'll probably want that
@@ -44,11 +44,29 @@ Configuring your project
 
 In your Django project's settings module, add easy-thumbnails to your
 ``INSTALLED_APPS`` setting::
-    
+
     INSTALLED_APPS = (
         ...
         'easy_thumbnails',
     )
 
-You may also want to set up some :doc:`easy-thumbnails related settings
-<ref/settings>`.
+If you are using Django 1.7, run ``python manage.py migrate easy_thumbnails``.
+Otherwise, just run ``python manage.py syncdb``.
+
+You're done! You'll want to head on over now to the
+:doc:`usage documentation <usage>`.
+
+
+Using with Django South
+=======================
+
+Django South migrations are stored in the ``south_migrations`` sub-package.
+
+In order to use South with easy_thumbnails, you will need to customize the
+``SOUTH_MIGRATION_MODULES`` setting:
+
+.. code-block:: python
+
+    SOUTH_MIGRATION_MODULES = {
+        'easy_thumbnails': 'easy_thumbnails.south_migrations',
+    }

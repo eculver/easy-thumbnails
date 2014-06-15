@@ -1,13 +1,18 @@
-from django.conf import settings
-from django.utils.functional import LazyObject
-from django.utils.hashcompat import md5_constructor
-from easy_thumbnails import defaults
+import hashlib
 import inspect
 import math
+from django.utils import six
+
+from django.utils.functional import LazyObject
+from django.utils import timezone
+
+
 try:
     from PIL import Image
 except ImportError:
     import Image
+
+from easy_thumbnails.conf import settings
 
 
 def image_entropy(im):
@@ -42,29 +47,16 @@ def valid_processor_options(processors=None):
     (and/or source generators)
     """
     if processors is None:
-        processors = [dynamic_import(p) for p in get_setting('PROCESSORS') +
-                      get_setting('SOURCE_GENERATORS')]
-    valid_options = set(['size', 'quality'])
+        processors = [
+            dynamic_import(p) for p in
+            settings.THUMBNAIL_PROCESSORS +
+            settings.THUMBNAIL_SOURCE_GENERATORS]
+    valid_options = set(['size', 'quality', 'subsampling'])
     for processor in processors:
         args = inspect.getargspec(processor)[0]
         # Add all arguments apart from the first (the source image).
         valid_options.update(args[1:])
     return list(valid_options)
-
-
-def get_setting(setting, override=None):
-    """
-    Get a thumbnail setting from Django settings module, falling back to the
-    default.
-
-    If override is not None, it will be used instead of the setting.
-    """
-    if override is not None:
-        return override
-    if hasattr(settings, 'THUMBNAIL_%s' % setting):
-        return getattr(settings, 'THUMBNAIL_%s' % setting)
-    else:
-        return getattr(defaults, setting)
 
 
 def is_storage_local(storage):
@@ -88,10 +80,10 @@ def get_storage_hash(storage):
         if storage._wrapped is None:
             storage._setup()
         storage = storage._wrapped
-    if not isinstance(storage, basestring):
+    if not isinstance(storage, six.string_types):
         storage_cls = storage.__class__
         storage = '%s.%s' % (storage_cls.__module__, storage_cls.__name__)
-    return md5_constructor(storage).hexdigest()
+    return hashlib.md5(storage.encode('utf8')).hexdigest()
 
 
 def is_transparent(image):
@@ -112,7 +104,7 @@ def exif_orientation(im):
     """
     try:
         exif = im._getexif()
-    except AttributeError:
+    except (AttributeError, IndexError, KeyError, IOError):
         exif = None
     if exif:
         orientation = exif.get(0x0112)
@@ -131,3 +123,21 @@ def exif_orientation(im):
         elif orientation == 8:
             im = im.rotate(90)
     return im
+
+
+def get_modified_time(storage, name):
+    """
+    Get modified time from storage, ensuring the result is a timezone-aware
+    datetime.
+    """
+    try:
+        modified_time = storage.modified_time(name)
+    except OSError:
+        return 0
+    except NotImplementedError:
+        return None
+    if modified_time and timezone.is_naive(modified_time):
+        if getattr(settings, 'USE_TZ', False):
+            default_timezone = timezone.get_default_timezone()
+            return timezone.make_aware(modified_time, default_timezone)
+    return modified_time

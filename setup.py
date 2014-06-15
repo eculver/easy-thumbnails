@@ -1,12 +1,30 @@
 #!/usr/bin/env python
-from distutils.core import setup
-from easy_thumbnails import get_version
+import os
+
+from setuptools import setup, find_packages
+from setuptools.command.test import test as TestCommand
+
+import easy_thumbnails
+
+
+class DjangoTests(TestCommand):
+
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = []
+        self.test_suite = True
+
+    def run_tests(self):
+        from django.core import management
+        DSM = 'DJANGO_SETTINGS_MODULE'
+        if DSM not in os.environ:
+            os.environ[DSM] = 'easy_thumbnails.tests.settings'
+        management.execute_from_command_line()
 
 
 def read_files(*filenames):
     """
     Output the contents of one or more files to a single concatenated string.
-
     """
     output = []
     for filename in filenames:
@@ -15,39 +33,38 @@ def read_files(*filenames):
             output.append(f.read())
         finally:
             f.close()
-    return '\n'.join(output)
+    return '\n\n'.join(output)
 
 
 setup(
     name='easy-thumbnails',
-    version=get_version(join='-'),
+    version=easy_thumbnails.get_version(),
     url='http://github.com/SmileyChris/easy-thumbnails',
-    #download_url='',
     description='Easy thumbnails for Django',
-    long_description=read_files('README.rst'),
+    long_description=read_files('README.rst', 'CHANGES.rst'),
     author='Chris Beaven',
     author_email='smileychris@gmail.com',
     platforms=['any'],
-    packages=[
-        'easy_thumbnails',
-        'easy_thumbnails.management',
-        'easy_thumbnails.management.commands',
-        'easy_thumbnails.migrations',
-        'easy_thumbnails.templatetags',
-        'easy_thumbnails.tests',
+    packages=find_packages(),
+    include_package_data=True,
+    install_requires=[
+        'django>=1.4.2',
+        'pillow',
     ],
-    package_data={'easy_thumbnails': ['docs/*.py', 'docs/*.', 'docs/*.bat'
-                                      'docs/*.txt', 'docs/ref/*.txt']},
+    cmdclass={'test': DjangoTests},
     classifiers=[
-        'Development Status :: 3 - Alpha',
+        'Development Status :: 5 - Production/Stable',
         'Environment :: Web Environment',
         'Framework :: Django',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
+        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.3',
         'Topic :: Software Development :: Libraries :: Application Frameworks',
         'Topic :: Software Development :: Libraries :: Python Modules',
     ],
-    zip_safe = False,
+    zip_safe=False,
 )

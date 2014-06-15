@@ -1,9 +1,14 @@
-from django.template import Library, Node, VariableDoesNotExist, \
-    TemplateSyntaxError
-from easy_thumbnails import utils
-from easy_thumbnails.files import get_thumbnailer
-from django.utils.html import escape
 import re
+from django.utils import six
+
+from django.template import (
+    Library, Node, VariableDoesNotExist, TemplateSyntaxError)
+from django.utils.html import escape
+
+from easy_thumbnails import utils
+from easy_thumbnails.alias import aliases
+from easy_thumbnails.conf import settings
+from easy_thumbnails.files import get_thumbnailer
 
 register = Library()
 
@@ -20,7 +25,6 @@ def split_args(args):
 
     An argument looks like ``crop``, ``crop="some option"`` or ``crop=my_var``.
     Arguments which provide no value get a value of ``True``.
-
     """
     args_dict = {}
     for arg in args:
@@ -42,25 +46,24 @@ class ThumbnailNode(Node):
     def render(self, context):
         # Note that this isn't a global constant because we need to change the
         # value for tests.
-        raise_errors = utils.get_setting('DEBUG')
+        raise_errors = settings.THUMBNAIL_DEBUG
         # Get the source file.
         try:
             source = self.source_var.resolve(context)
         except VariableDoesNotExist:
             if raise_errors:
-                raise VariableDoesNotExist("Variable '%s' does not exist." %
-                        self.source_var)
+                raise VariableDoesNotExist(
+                    "Variable '%s' does not exist." % self.source_var)
             return self.bail_out(context)
         if not source:
             if raise_errors:
                 raise TemplateSyntaxError(
-                    "Variable '%s' is an invalid source." % self.source_var
-                )
+                    "Variable '%s' is an invalid source." % self.source_var)
             return self.bail_out(context)
         # Resolve the thumbnail option values.
         try:
             opts = {}
-            for key, value in self.opts.iteritems():
+            for key, value in six.iteritems(self.opts):
                 if hasattr(value, 'resolve'):
                     value = value.resolve(context)
                 opts[str(key)] = value
@@ -71,22 +74,39 @@ class ThumbnailNode(Node):
         # Size variable can be either a tuple/list of two integers or a
         # valid string.
         size = opts['size']
-        if isinstance(size, basestring):
+        if isinstance(size, six.string_types):
             m = RE_SIZE.match(size)
             if m:
                 opts['size'] = (int(m.group(1)), int(m.group(2)))
             else:
-                if raise_errors:
-                    raise TemplateSyntaxError("%r is not a valid size." % size)
-                return self.bail_out(context)
+                # Size variable may alternatively be referencing an alias.
+                alias = aliases.get(size, target=source)
+                if alias:
+                    del opts['size']
+                    opts = dict(alias, **opts)
+                else:
+                    if raise_errors:
+                        raise TemplateSyntaxError(
+                            "%r is not a valid size." % size)
+                    return self.bail_out(context)
         # Ensure the quality is an integer.
         if 'quality' in opts:
             try:
                 opts['quality'] = int(opts['quality'])
             except (TypeError, ValueError):
                 if raise_errors:
-                    raise TemplateSyntaxError("%r is an invalid quality." %
-                                              opts['quality'])
+                    raise TemplateSyntaxError(
+                        "%r is an invalid quality." % opts['quality'])
+                return self.bail_out(context)
+        # Ensure the subsampling level is an integer.
+        if 'subsampling' in opts:
+            try:
+                opts['subsampling'] = int(opts['subsampling'])
+            except (TypeError, ValueError):
+                if raise_errors:
+                    raise TemplateSyntaxError(
+                        "%r is an invalid subsampling level." %
+                        opts['subsampling'])
                 return self.bail_out(context)
 
         try:
@@ -114,32 +134,43 @@ def easy_thumbnail(parser, token):
 
     Basic tag Syntax::
 
-        {% thumbnail [source] [size] [options] %}
+        {% easy_thumbnail [source] [size] [options] %}
 
     *source* must be a ``File`` object, usually an Image/FileField of a model
     instance.
 
     *size* can either be:
 
+    * the name of an alias
+
     * the size in the format ``[width]x[height]`` (for example,
-      ``{% thumbnail person.photo 100x50 %}``) or
+      ``{% easy_thumbnail person.photo 100x50 %}``) or
 
     * a variable containing a valid size (i.e. either a string in the
       ``[width]x[height]`` format or a tuple containing two integers):
-      ``{% thumbnail person.photo size_var %}``.
+      ``{% easy_thumbnail person.photo size_var %}``.
 
     *options* are a space separated list of options which are used when
     processing the image to a thumbnail such as ``sharpen``, ``crop`` and
     ``quality=90``.
+
+    If *size* is specified as an alias name, *options* are used to override
+    and/or supplement the options defined in that alias.
 
     The thumbnail tag can also place a
     :class:`~easy_thumbnails.files.ThumbnailFile` object in the context,
     providing access to the properties of the thumbnail such as the height and
     width::
 
-        {% thumbnail [source] [size] [options] as [variable] %}
+        {% easy_thumbnail [source] [size] [options] as [variable] %}
 
-    When ``as [variable]`` is used, the tag doesn't output anything.
+    When ``as [variable]`` is used, the tag doesn't output anything. Instead,
+    use the variable like a standard ``ImageFieldFile`` object::
+
+        {% easy_thumbnail obj.picture 200x200 upscale as thumb %}
+        <img href="{{ thumb.url }}"
+             width="{{ thumb.width }}"
+             height="{{ thumb.height }}" />
 
     **Debugging**
 
@@ -165,7 +196,8 @@ def easy_thumbnail(parser, token):
         context_name = None
 
     if len(args) < 3:
-        raise TemplateSyntaxError("Invalid syntax. Expected "
+        raise TemplateSyntaxError(
+            "Invalid syntax. Expected "
             "'{%% %s source size [option1 option2 ...] %%}' or "
             "'{%% %s source size [option1 option2 ...] as variable %%}'" %
             (tag, tag))
@@ -196,4 +228,74 @@ def easy_thumbnail(parser, token):
     return ThumbnailNode(source_var, opts=opts, context_name=context_name)
 
 
+def easy_thumbnailer(obj, relative_name=None):
+    """
+    Creates a thumbnailer from an object (usually a ``FileField``).
+
+    Example usage::
+
+        {% with photo=person.photo|easy_thumbnailer %}
+        {% if photo %}
+            <a href="{{ photo.large.url }}">
+                {{ photo.square.tag }}
+            </a>
+        {% else %}
+            <img src="{% static 'template/fallback.png' %}" alt="" />
+        {% endif %}
+        {% endwith %}
+
+    If you know what you're doing, you can also pass the relative name::
+
+        {% with photo=storage|easy_thumbnailer:'some/file.jpg' %}...
+    """
+    return get_thumbnailer(obj, relative_name=relative_name)
+
+
+def easy_thumbnailer_passive(obj):
+    """
+    Creates a thumbnailer from an object (usually a ``FileFile``) that won't
+    generate new thumbnails.
+
+    This is useful if you are using another process to generate the thumbnails
+    rather than having them generated on the fly if they are missing.
+
+    Example usage::
+
+        {% with avatar=person.avatar|easy_thumbnailer_passive %}
+            {% with avatar_thumb=avatar.small %}
+                {% if avatar_thumb %}
+                    <img src="{{ avatar_thumb.url }}" alt="" />
+                {% else %}
+                    <img src="{% static 'img/default-avatar-small.png' %}"
+                        alt="" />
+                {% endif %}
+            {% endwith %}
+        {% endwith %}
+    """
+    thumbnailer = get_thumbnailer(obj)
+    thumbnailer.generate = False
+    return thumbnailer
+
+
+def easy_thumbnail_url(source, alias):
+    """
+    Return the thumbnail url for a source file using an aliased set of
+    thumbnail options.
+
+    If no matching alias is found, returns an empty string.
+
+    Example usage::
+
+        <img src="{{ person.photo|easy_thumbnail_url:'small' }}" alt="">
+    """
+    try:
+        thumb = get_thumbnailer(source)[alias]
+    except Exception:
+        return ''
+    return thumb.url
+
+
 register.tag(easy_thumbnail)
+register.filter(easy_thumbnailer)
+register.filter(easy_thumbnailer_passive)
+register.filter(easy_thumbnail_url)
